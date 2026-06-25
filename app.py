@@ -84,6 +84,32 @@ if visao == "Visão Geral da Turma":
         st.metric("Tópicos Críticos (<50% acertos)", f"{questoes_criticas}")
 
     st.markdown("---")
+    
+    # --- NOVA SEÇÃO: RANKING DE DESEMPENHO (MELHORES E PIORES) ---
+    st.subheader("🏆 Ranking de Rendimento Escolar")
+    
+    # Calcular a nota final de cada aluno (porcentagem de acertos)
+    df_ranking = df_filtrado.groupby('Aluno')['Nota'].mean().reset_index()
+    df_ranking['Aproveitamento'] = df_ranking['Nota'] * 100
+    df_ranking = df_ranking.sort_values(by='Aproveitamento', ascending=False).reset_index(drop=True)
+    
+    col_melhores, col_piores = st.columns(2)
+    
+    with col_melhores:
+        st.write("⭐ **Alunos Destaques (Maiores Notas)**")
+        df_top = df_ranking.head(3)[['Aluno', 'Aproveitamento']].copy()
+        df_top['Aproveitamento'] = df_top['Aproveitamento'].map('{:.1f}%'.format)
+        st.dataframe(df_top, use_container_width=True, hide_index=True)
+        
+    with col_piores:
+        st.write("⚠️ **Alunos com Baixo Rendimento (Atenção/Recuperação)**")
+        df_Low = df_ranking.tail(3)[['Aluno', 'Aproveitamento']].copy()
+        df_Low['Aproveitamento'] = df_Low['Aproveitamento'].map('{:.1f}%'.format)
+        # Inverter para mostrar o menor na primeira linha da tabela de atenção
+        df_Low = df_Low.sort_values(by='Aproveitamento', ascending=True)
+        st.dataframe(df_Low, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
     col_esq, col_dir = st.columns(2)
 
     with col_esq:
@@ -150,7 +176,7 @@ else:
         st.plotly_chart(fig_pizza, use_container_width=True)
 
     with col_tabela:
-        st.write("📋 **Desempenho Individual por Item Avaliado**")
+        st.write("📋 **Desempenho Individual por Item Evaluado**")
         
         df_tabela_aluno = df_aluno[['ID_Questao', 'Assunto', 'Dificuldade', 'Competencia', 'Nota']].copy()
         df_tabela_aluno['Resultado'] = df_tabela_aluno['Nota'].apply(lambda x: "✅ Acertou" if x == 1 else "❌ Errou")
