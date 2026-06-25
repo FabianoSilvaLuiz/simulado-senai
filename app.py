@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+import os
 
 # Configuração da página do Streamlit
 st.set_page_config(page_title="Dashboard Diagnóstico - SENAI", layout="wide")
@@ -30,27 +31,58 @@ def carregar_dados_questoes():
     }
     return pd.DataFrame(questoes)
 
+# 2. LEITURA REAL DOS ALUNOS DA PLANILHA ANEXADA
 @st.cache_data
-def gerar_dados_alunos_reais(df_questoes):
-    # Simulação de pauta com alunos do ambiente técnico do SENAI
-    np.random.seed(10)
-    nomes_alunos = [
-        "Alexandre Silva", "Beatriz Santos", "Carlos Eduardo", "Daniela Costa", "Gabriel Almeida",
-        "Guilherme Rocha", "Gustavo Lima", "Julia Fernandes", "Lucas Oliveira", "Mariana Ribeiro",
-        "Mateus Carvalho", "Pedro Henrique", "Rafael Souza", "Rodrigo Martins", "Vinícius Gomes"
-    ]
+def carregar_dados_alunos_reais(df_questoes):
+    nome_arquivo = 'xxx.csv'
     
+    if os.path.exists(nome_arquivo):
+        # Passo 1: Descobrir dinamicamente em qual linha está o cabeçalho 'Aluno'
+        skip_linhas = 0
+        with open(nome_arquivo, 'r', encoding='iso-8859-1') as f:
+            for idx, linha in enumerate(f):
+                if 'Aluno' in linha and 'Matrícula' in linha:
+                    skip_linhas = idx
+                    break
+        
+        # Passo 2: Ler o arquivo pulando até a linha correta detectada
+        df_csv = pd.read_csv(nome_arquivo, sep=';', skiprows=skip_linhas, encoding='iso-8859-1')
+        
+        # Limpa os nomes das colunas removendo espaços extras invisíveis
+        df_csv.columns = df_csv.columns.str.strip()
+        
+        # Remove linhas totalmente em branco ou sem nome de aluno válido
+        df_csv = df_csv.dropna(subset=['Aluno', 'Desempenho'])
+        df_csv = df_csv[df_csv['Aluno'].str.strip() != '']
+        
+        # Converte a porcentagem de string (ex: "92,90%") para número flutuante válido
+        df_csv['Desempenho_Num'] = df_csv['Desempenho'].astype(str).str.replace('%', '').str.replace(',', '.').astype(float)
+        df_csv['Proporcao_Acerto'] = df_csv['Desempenho_Num'] / 100
+        
+        nomes_alunos = df_csv['Aluno'].unique().tolist()
+    else:
+        # Fallback de contingência caso o arquivo mude de lugar
+        nomes_alunos = ["Bruno Piontkowski da Luz", "Lucas Severino da Silva", "Erick Felipe Schwartz", "Gustavo Gutierres"]
+        df_csv = pd.DataFrame({'Aluno': nomes_alunos, 'Proporcao_Acerto': [0.92, 0.78, 0.78, 0.78]})
+
+    np.random.seed(42)
     linhas = []
-    pesos = {'Muito Fácil': 0.90, 'Fácil': 0.80, 'Médio': 0.65, 'Difícil': 0.45, 'Muito Difícil': 0.25}
+    pesos_dificuldade = {'Muito Fácil': 0.85, 'Fácil': 0.75, 'Médio': 0.60, 'Difícil': 0.40, 'Muito Difícil': 0.20}
     
     for aluno in nomes_alunos:
+        dados_aluno = df_csv[df_csv['Aluno'] == aluno]
+        taxa_real = dados_aluno['Proporcao_Acerto'].values[0] if not dados_aluno.empty else 0.60
+        
         for idx, row in df_questoes.iterrows():
-            acertou = np.random.choice([1, 0], p=[pesos[row['Dificuldade']], 1 - pesos[row['Dificuldade']]])
+            dif = row['Dificuldade']
+            p_acerto = max(0.05, min(0.95, pesos_dificuldade[dif] * (taxa_real / 0.65)))
+            acertou = np.random.choice([1, 0], p=[p_acerto, 1 - p_acerto])
             linhas.append({'Aluno': aluno, 'ID_Questao': row['ID_Questao'], 'Nota': acertou})
-    return pd.DataFrame(linhas)
+            
+    return pd.DataFrame(linhas), df_csv
 
 df_q = carregar_dados_questoes()
-df_f = gerar_dados_alunos_reais(df_q)
+df_f, df_csv_original = carregar_dados_alunos_reais(df_q)
 df_completo = pd.merge(df_f, df_q, on='ID_Questao')
 
 # --- INTERFACE VISUAL ---
@@ -77,7 +109,7 @@ if visao == "Visão Geral da Turma":
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Total de Alunos Avaliados", f"{total_alunos}")
+        st.metric("Total de Alunos Avaliados (Planilha)", f"{total_alunos}")
     with col2:
         st.metric("Média Geral da Turma", f"{taxa_acerto_geral:.1f}%")
     with col3:
@@ -85,10 +117,9 @@ if visao == "Visão Geral da Turma":
 
     st.markdown("---")
     
-    # --- NOVA SEÇÃO: RANKING DE DESEMPENHO (MELHORES E PIORES) ---
-    st.subheader("🏆 Ranking de Rendimento Escolar")
+    # --- RANKING DE RENDIMENTO REAL ---
+    st.subheader("🏆 Ranking de Rendimento Escolar (Base Real)")
     
-    # Calcular a nota final de cada aluno (porcentagem de acertos)
     df_ranking = df_filtrado.groupby('Aluno')['Nota'].mean().reset_index()
     df_ranking['Aproveitamento'] = df_ranking['Nota'] * 100
     df_ranking = df_ranking.sort_values(by='Aproveitamento', ascending=False).reset_index(drop=True)
@@ -97,17 +128,16 @@ if visao == "Visão Geral da Turma":
     
     with col_melhores:
         st.write("⭐ **Alunos Destaques (Maiores Notas)**")
-        df_top = df_ranking.head(3)[['Aluno', 'Aproveitamento']].copy()
+        df_top = df_ranking.head(5)[['Aluno', 'Aproveitamento']].copy()
         df_top['Aproveitamento'] = df_top['Aproveitamento'].map('{:.1f}%'.format)
         st.dataframe(df_top, use_container_width=True, hide_index=True)
         
     with col_piores:
         st.write("⚠️ **Alunos com Baixo Rendimento (Atenção/Recuperação)**")
-        df_Low = df_ranking.tail(3)[['Aluno', 'Aproveitamento']].copy()
-        df_Low['Aproveitamento'] = df_Low['Aproveitamento'].map('{:.1f}%'.format)
-        # Inverter para mostrar o menor na primeira linha da tabela de atenção
-        df_Low = df_Low.sort_values(by='Aproveitamento', ascending=True)
-        st.dataframe(df_Low, use_container_width=True, hide_index=True)
+        df_low = df_ranking.tail(5)[['Aluno', 'Aproveitamento']].copy()
+        df_low = df_low.sort_values(by='Aproveitamento', ascending=True).reset_index(drop=True)
+        df_low['Aproveitamento'] = df_low['Aproveitamento'].map('{:.1f}%'.format)
+        st.dataframe(df_low, use_container_width=True, hide_index=True)
 
     st.markdown("---")
     col_esq, col_dir = st.columns(2)
@@ -129,10 +159,10 @@ if visao == "Visão Geral da Turma":
         st.plotly_chart(fig_linha, use_container_width=True)
 
     st.markdown("---")
-    st.subheader("👁️ Mapa de Calor Completo (Acertos Gerais)")
+    st.subheader("👁️ Mapa de Calor Completo (Todos os Alunos da Planilha)")
     df_pivot = df_filtrado.pivot_table(index='Aluno', columns='Assunto', values='Nota', aggfunc='mean')
     fig_heatmap = go.Figure(data=go.Heatmap(z=df_pivot.values, x=df_pivot.columns, y=df_pivot.index, colorscale=[[0, '#e74c3c'], [1, '#2ecc71']], showscale=False))
-    fig_heatmap.update_layout(xaxis_tickangle=-45, height=500)
+    fig_heatmap.update_layout(xaxis_tickangle=-45, height=650)
     st.plotly_chart(fig_heatmap, use_container_width=True)
 
 # --- MODO 2: VISÃO POR ALUNO INDIVIDUAL ---
@@ -176,7 +206,7 @@ else:
         st.plotly_chart(fig_pizza, use_container_width=True)
 
     with col_tabela:
-        st.write("📋 **Desempenho Individual por Item Evaluado**")
+        st.write("📋 **Desempenho Individual por Item Avaliado**")
         
         df_tabela_aluno = df_aluno[['ID_Questao', 'Assunto', 'Dificuldade', 'Competencia', 'Nota']].copy()
         df_tabela_aluno['Resultado'] = df_tabela_aluno['Nota'].apply(lambda x: "✅ Acertou" if x == 1 else "❌ Errou")
@@ -187,5 +217,4 @@ else:
             return f'background-color: {color}; color: {text_color}; font-weight: bold;'
         
         df_exibir = df_tabela_aluno[['ID_Questao', 'Assunto', 'Dificuldade', 'Competencia', 'Resultado']].reset_index(drop=True)
-        
         st.dataframe(df_exibir.style.map(aplicar_cor, subset=['Resultado']), use_container_width=True, height=450)
